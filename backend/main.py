@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from sklearn.metrics.pairwise import cosine_similarity
+from surprise import dump
 import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np
@@ -16,12 +17,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 KNN_PATH = os.getenv("KNN_PATH")
+SVDPP_PATH = os.getenv("SVDPP_PATH")
 NCF_PATH = os.getenv("NCF_PATH")
 CBF_PATH = os.getenv("CBF_PATH")
 DB_PATH = os.getenv("DB_PATH")
 
 ml_models = {
     "knn": None,
+    "svdpp": None,
     "ncf": None,
     "cbf": None
 }
@@ -51,14 +54,14 @@ class NCFModel(nn.Module):
         pred = self.output(x)
         return pred
 
-def calculate_match_percentage(score):
-    mu = 3.0
-    scale = 1.0
+def calculate_sigmoid_percentage(score):
+    mu = 3.5
+    scale = 0.5
     x_transformed = (score - mu) / scale
     sigmoid = 1 / (1 + math.exp(-x_transformed))
     return int(sigmoid * 100)
 
-def calculate_cbf_match(score):
+def calculate_percentage(score):
     pct = max(0, score) * 100
     return int(pct)
 
@@ -74,7 +77,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Failed to load KNN model: {e}")
         ml_models["knn"] = None
-    
+
+    print("Loading SVD++ Model...")
+    try:
+        _, loaded_algo = dump.load(SVDPP_PATH)
+        ml_models["svdpp"] = loaded_algo
+        
+        trainset = loaded_algo.trainset
+        all_raw_ids = [trainset.to_raw_iid(i) for i in trainset.all_items()]
+        ml_models["svdpp_all_items"] = all_raw_ids
+        
+        print(f"SVD++ loaded successfully with {len(all_raw_ids)} items.")
+    except Exception as e:
+        print(f"Failed to load SVD++: {e}")
+        ml_models["svdpp"] = None
+            
     print("Loading NCF Model...")
     try:
         with open(NCF_PATH, "rb") as f:
@@ -171,7 +188,7 @@ def fetch_db_details(item_ids, scores):
         if iid in db_items:
             item_data = db_items[iid]
             item_data['ai_score'] = f"{scores[i]:.4f}" # Raw Cosine Score
-            item_data['match_percentage'] = f"{calculate_cbf_match(scores[i])}% Match"
+            item_data['match_percentage'] = f"{calculate_percentage(scores[i])}% Match"
             results.append(item_data)
             
     return {"recommendations": results}
@@ -274,6 +291,89 @@ def recommend_knn_context(user_id: int, item_id: int, k: int = 10):
             
     return fetch_db_details(ids, scores)
 
+@app.get("/api/recommend_svdpp/{user_id}", tags=["Recommendations"])
+def recommend_svdpp_user(user_id: int, k: int = 10):
+    if ml_models["svdpp"] is None:
+        raise HTTPException(status_code=503, detail="SVD++ model not loaded")
+    
+    algo = ml_models["svdpp"]
+    all_item_ids = ml_models.get("svdpp_all_items", [])
+    
+    # fallback if cache empty
+    if not all_item_ids:
+        conn = get_db_connection()
+        rows = conn.execute("SELECT itemId FROM items").fetchall()
+        conn.close()
+        all_item_ids = [row['itemId'] for row in rows]
+        ml_models["svdpp_all_items"] = all_item_ids
+
+    # predict rating for every candidate item
+    predictions = []
+    for iid in all_item_ids:
+        pred = algo.predict(user_id, iid)
+        predictions.append((iid, pred.est))
+    
+    # sort
+    predictions.sort(key=lambda x: x[1], reverse=True)
+    top_k = predictions[:k]
+    
+    final_ids = [pid for pid, score in top_k]
+    final_scores = [score / 5.0 for pid, score in top_k]
+    
+    results = fetch_db_details(final_ids, final_scores)
+    
+    # for i, item in enumerate(results["recommendations"]):
+    #     item['match_percentage'] = f"{calculate_sigmoid_percentage(final_scores[i])}% Match"
+        
+    return results
+
+@app.get("/api/recommend_svdpp/{user_id}/context/{item_id}", tags=["Recommendations"])
+def recommend_svdpp_context(user_id: int, item_id: int, k: int = 10):
+    if ml_models["svdpp"] is None:
+        raise HTTPException(status_code=503, detail="SVD++ model not loaded")
+        
+    algo = ml_models["svdpp"]
+    
+    # get item
+    try:
+        inner_id = algo.trainset.to_inner_iid(item_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Item not found in model")
+
+    # get item factors (The Latent Matrix Q)
+    item_factors = algo.qi
+    seed_vector = item_factors[inner_id].reshape(1, -1)
+    
+    # calculate simiarity
+    sim_scores = cosine_similarity(seed_vector, item_factors).flatten()
+    
+    # get candidate pool (Top 50 Similar Items)
+    candidate_inner_ids = sim_scores.argsort()[::-1][1:51] # skip 0 (itself)
+    
+    # rerank these candidates by User's Predicted Rating
+    ranked_candidates = []
+    
+    for inner_iid in candidate_inner_ids:
+        raw_iid = algo.trainset.to_raw_iid(inner_iid)
+        
+        pred = algo.predict(user_id, raw_iid)
+        
+        ranked_candidates.append((raw_iid, pred.est))
+        
+    # sort and top k
+    ranked_candidates.sort(key=lambda x: x[1], reverse=True)
+    top_k = ranked_candidates[:k]
+    
+    final_ids = [pid for pid, score in top_k]
+    final_scores = [score / 5.0 for pid, score in top_k]
+    
+    results = fetch_db_details(final_ids, final_scores)
+    
+    # for i, item in enumerate(results["recommendations"]):
+    #     item['match_percentage'] = f"{calculate_sigmoid_percentage(final_scores[i])}% Match"
+        
+    return results
+
 @app.get("/api/recommend_ncf/{user_id}", tags=["Recommendations"])
 def recommend_ncf_user(user_id: int, k: int = 10):
     if ml_models["ncf"] is None:
@@ -319,8 +419,13 @@ def recommend_ncf_user(user_id: int, k: int = 10):
     top_item_ids = le_item.inverse_transform(top_indices.numpy())
 
     top_scores /= 6.5
-    
-    return fetch_db_details(top_item_ids, top_scores.numpy())
+
+    results = fetch_db_details(top_item_ids, top_scores.numpy())
+
+    # for i, item in enumerate(results["recommendations"]):
+    #     item['match_percentage'] = f"{calculate_sigmoid_percentage(top_scores[i])}% Match"
+
+    return results
 
 @app.get("/api/recommend_ncf/{user_id}/context/{item_id}", tags=["Recommendations"])
 def recommend_ncf_context(user_id: int, item_id: int, k: int = 10):
@@ -382,7 +487,12 @@ def recommend_ncf_context(user_id: int, item_id: int, k: int = 10):
     
     final_scores /= 6.5
 
-    return fetch_db_details(final_item_ids, final_scores.numpy())
+    results = fetch_db_details(final_item_ids, final_scores.numpy())
+
+    # for i, item in enumerate(results["recommendations"]):
+    #     item['match_percentage'] = f"{calculate_sigmoid_percentage(final_scores[i])}% Match"
+
+    return results
 
 @app.get("/api/recommend_cbf/{user_id}", tags=["Recommendations"])
 def recommend_cbf_user(user_id: int, k: int = 10):
