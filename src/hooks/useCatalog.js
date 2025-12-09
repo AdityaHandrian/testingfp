@@ -12,11 +12,13 @@ export function useCatalog() {
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedItem, setSelectedItem] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(20);
 
   // Fetch all items on component mount
   useEffect(() => {
-    fetchItems();
-  }, []);
+    fetchItems(currentPage);
+  }, [currentPage]);
 
   // Filter items based on search query
   useEffect(() => {
@@ -26,22 +28,24 @@ export function useCatalog() {
       const query = searchQuery.toLowerCase();
       const filtered = items.filter(
         (item) =>
-          item.name?.toLowerCase().includes(query) ||
-          item.category?.toLowerCase().includes(query) ||
-          item.description?.toLowerCase().includes(query)
+          (item.name && item.name.toLowerCase().includes(query)) ||
+          (item.product_name && item.product_name.toLowerCase().includes(query)) ||
+          (item.category && item.category.toLowerCase().includes(query)) ||
+          (item.product_category && item.product_category.toLowerCase().includes(query)) ||
+          (item.description && item.description.toLowerCase().includes(query))
       );
       setFilteredItems(filtered);
     }
   }, [searchQuery, items]);
 
   /**
-   * Fetch all catalog items from API
+   * Fetch catalog products from API with pagination
    */
-  const fetchItems = useCallback(async () => {
+  const fetchItems = useCallback(async (pageNum = 1) => {
     try {
       setIsLoading(true);
       setError(null);
-      const data = await catalogApi.getAllItems();
+      const data = await catalogApi.getAllProducts(pageNum, pageSize);
       setItems(Array.isArray(data) ? data : []);
       setFilteredItems(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -52,7 +56,7 @@ export function useCatalog() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [pageSize]);
 
   /**
    * Update search query
@@ -82,6 +86,20 @@ export function useCatalog() {
     setSelectedItem(null);
   }, []);
 
+  /**
+   * Go to next page
+   */
+  const nextPage = useCallback(() => {
+    setCurrentPage((prev) => prev + 1);
+  }, []);
+
+  /**
+   * Go to previous page
+   */
+  const prevPage = useCallback(() => {
+    setCurrentPage((prev) => (prev > 1 ? prev - 1 : 1));
+  }, []);
+
   return {
     // State
     items,
@@ -90,6 +108,8 @@ export function useCatalog() {
     error,
     searchQuery,
     selectedItem,
+    currentPage,
+    pageSize,
     itemCount: filteredItems.length,
     totalItemCount: items.length,
 
@@ -99,6 +119,8 @@ export function useCatalog() {
     clearSearch,
     selectItem,
     clearSelectedItem,
+    nextPage,
+    prevPage,
   };
 }
 
