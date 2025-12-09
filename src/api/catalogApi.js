@@ -9,17 +9,45 @@ import apiClient from './apiClient';
 // ==================== CATALOG ENDPOINTS ====================
 
 /**
- * Get all products from catalog
+ * Get all products from catalog with pagination
+ * @param {number} pageNum - Page number (starting from 1)
+ * @param {number} pageSize - Number of items per page (default: 20)
  * @returns {Promise<Array>} Array of product objects
  */
-export async function getAllItems() {
+export async function getAllProducts(pageNum = 1, pageSize = 20) {
   try {
-    const response = await apiClient.get('/items');
-    return response.data.items || response.data || [];
+    const response = await apiClient.get(
+      `/products/${pageNum}/page/${pageSize}`
+    );
+    // Handle different response formats from backend
+    if (Array.isArray(response.data)) {
+      return response.data;
+    }
+    return response.data.products || response.data.items || [];
   } catch (error) {
-    console.error('Failed to fetch items:', error);
+    console.error(
+      `Failed to fetch products (page ${pageNum}, size ${pageSize}):`,
+      error
+    );
     throw new Error(
       error.response?.data?.message || 'Gagal memuat katalog produk'
+    );
+  }
+}
+
+/**
+ * Get product details
+ * @param {number} itemId - Product ID
+ * @returns {Promise<Object>} Product object
+ */
+export async function getProductDetail(itemId) {
+  try {
+    const response = await apiClient.get(`/products/${itemId}`);
+    return response.data || {};
+  } catch (error) {
+    console.error(`Failed to fetch product ${itemId}:`, error);
+    throw new Error(
+      error.response?.data?.message || 'Gagal memuat detail produk'
     );
   }
 }
@@ -30,7 +58,11 @@ export async function getAllItems() {
  */
 export async function getAllUsers() {
   try {
-    const response = await apiClient.get('/users');
+    const response = await apiClient.get('/users/');
+    // Handle different response formats
+    if (Array.isArray(response.data)) {
+      return response.data;
+    }
     return response.data.users || response.data || [];
   } catch (error) {
     console.error('Failed to fetch users:', error);
@@ -38,7 +70,39 @@ export async function getAllUsers() {
   }
 }
 
+/**
+ * Get user details
+ * @param {number} userId - User ID
+ * @returns {Promise<Object>} User object
+ */
+export async function getUserDetail(userId) {
+  try {
+    const response = await apiClient.get(`/users/${userId}`);
+    return response.data || {};
+  } catch (error) {
+    console.error(`Failed to fetch user ${userId}:`, error);
+    throw new Error(error.response?.data?.message || 'Gagal memuat detail pengguna');
+  }
+}
+
 // ==================== RECOMMENDATION ENDPOINTS ====================
+
+/**
+ * Get NCF recommendations (simple)
+ * @param {number} userId - User ID
+ * @returns {Promise<Array>} Array of recommended items with scores
+ */
+export async function getNCFRecommendation(userId) {
+  try {
+    const response = await apiClient.get(`/recommend_ncf/${userId}`);
+    return response.data.items || response.data || [];
+  } catch (error) {
+    console.error(`Failed to fetch NCF recommendations for user ${userId}:`, error);
+    throw new Error(
+      error.response?.data?.message || 'Gagal memuat rekomendasi NCF'
+    );
+  }
+}
 
 /**
  * Get NCF recommendations with product context
@@ -53,9 +117,29 @@ export async function getNCFRecommendationContext(userId, itemId) {
     );
     return response.data.items || response.data || [];
   } catch (error) {
-    console.error(`Failed to fetch NCF recommendations for user ${userId}, item ${itemId}:`, error);
+    console.error(
+      `Failed to fetch NCF recommendations for user ${userId}, item ${itemId}:`,
+      error
+    );
     throw new Error(
       error.response?.data?.message || 'Gagal memuat rekomendasi NCF'
+    );
+  }
+}
+
+/**
+ * Get CBF recommendations (simple)
+ * @param {number} userId - User ID
+ * @returns {Promise<Array>} Array of recommended items with scores
+ */
+export async function getCBFRecommendation(userId) {
+  try {
+    const response = await apiClient.get(`/recommend_cbf/${userId}`);
+    return response.data.items || response.data || [];
+  } catch (error) {
+    console.error(`Failed to fetch CBF recommendations for user ${userId}:`, error);
+    throw new Error(
+      error.response?.data?.message || 'Gagal memuat rekomendasi CBF'
     );
   }
 }
@@ -73,7 +157,10 @@ export async function getCBFRecommendationContext(userId, itemId) {
     );
     return response.data.items || response.data || [];
   } catch (error) {
-    console.error(`Failed to fetch CBF recommendations for user ${userId}, item ${itemId}:`, error);
+    console.error(
+      `Failed to fetch CBF recommendations for user ${userId}, item ${itemId}:`,
+      error
+    );
     throw new Error(
       error.response?.data?.message || 'Gagal memuat rekomendasi CBF'
     );
@@ -82,41 +169,49 @@ export async function getCBFRecommendationContext(userId, itemId) {
 
 /**
  * Get SVD recommendations with product context
+ * NOTE: Currently not available in backend - stub for future use
  * @param {number} userId - User ID
  * @param {number} itemId - Product ID for context
  * @returns {Promise<Array>} Array of recommended items with scores
  */
 export async function getSVDRecommendationContext(userId, itemId) {
   try {
+    // Placeholder - endpoint not yet implemented in backend
     const response = await apiClient.get(
       `/recommend_svd/${userId}/context/${itemId}`
     );
     return response.data.items || response.data || [];
   } catch (error) {
-    console.error(`Failed to fetch SVD recommendations for user ${userId}, item ${itemId}:`, error);
-    throw new Error(
-      error.response?.data?.message || 'Gagal memuat rekomendasi SVD'
+    console.error(
+      `Failed to fetch SVD recommendations for user ${userId}, item ${itemId}:`,
+      error
     );
+    // Return empty array instead of throwing for graceful degradation
+    return [];
   }
 }
 
 /**
  * Get KNN recommendations with product context
+ * NOTE: Currently not available in backend - stub for future use
  * @param {number} userId - User ID
  * @param {number} itemId - Product ID for context
  * @returns {Promise<Array>} Array of recommended items with scores
  */
 export async function getKNNRecommendationContext(userId, itemId) {
   try {
+    // Placeholder - endpoint not yet implemented in backend
     const response = await apiClient.get(
       `/recommend_knn/${userId}/context/${itemId}`
     );
     return response.data.items || response.data || [];
   } catch (error) {
-    console.error(`Failed to fetch KNN recommendations for user ${userId}, item ${itemId}:`, error);
-    throw new Error(
-      error.response?.data?.message || 'Gagal memuat rekomendasi KNN'
+    console.error(
+      `Failed to fetch KNN recommendations for user ${userId}, item ${itemId}:`,
+      error
     );
+    // Return empty array instead of throwing for graceful degradation
+    return [];
   }
 }
 
