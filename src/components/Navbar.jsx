@@ -72,15 +72,31 @@ function MobileAuthSection({ setIsOpen }) {
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
+  const { user } = useAuthContext();
 
   const toggleMenu = () => setIsOpen(!isOpen);
   const isActive = (path) => location.pathname === path;
 
   const navLinks = [
     { name: 'Beranda', path: ROUTES.HOME },
+  ];
+
+  // Add authenticated-only links
+  const authenticatedLinks = [
+    { name: 'Katalog', path: ROUTES.CATALOG },
+    { name: 'Pengguna', path: ROUTES.USERS },
+  ];
+
+  const otherLinks = [
     { name: 'Rekomendasi', path: ROUTES.RECOMMENDATION },
     { name: 'Analisis Sentimen', path: ROUTES.SENTIMENT },
     { name: 'Dashboard', path: ROUTES.DASHBOARD },
+  ];
+
+  const allNavLinks = [
+    ...navLinks,
+    ...(user ? authenticatedLinks : []),
+    ...otherLinks,
   ];
 
   return (
@@ -93,12 +109,12 @@ export default function Navbar() {
             <div className="w-10 h-10 bg-white text-blue-600 rounded-lg flex items-center justify-center font-bold">
               RS
             </div>
-            <span className="hidden sm:inline text-lg font-bold">RecSystem</span>
+            <span className="hidden sm:inline text-lg font-bold">Product Recommendation</span>
           </Link>
 
           {/* Desktop Menu */}
           <div className="hidden md:flex space-x-1">
-            {navLinks.map((link) => (
+            {allNavLinks.map((link) => (
               <Link
                 key={link.path}
                 to={link.path}
@@ -130,7 +146,7 @@ export default function Navbar() {
       {isOpen && (
         <div className="md:hidden bg-blue-700">
           <div className="px-2 pt-2 pb-3 space-y-1">
-            {navLinks.map((link) => (
+            {allNavLinks.map((link) => (
               <Link
                 key={link.path}
                 to={link.path}
