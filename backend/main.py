@@ -15,11 +15,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+KNN_PATH = os.getenv("KNN_PATH")
 NCF_PATH = os.getenv("NCF_PATH")
 CBF_PATH = os.getenv("CBF_PATH")
 DB_PATH = os.getenv("DB_PATH")
 
 ml_models = {
+    "knn": None,
     "ncf": None,
     "cbf": None
 }
@@ -64,6 +66,15 @@ def calculate_cbf_match(score):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    print("Loading KNN Model...")
+    try:
+        with open(KNN_PATH, "rb") as f:
+            ml_models["knn"] = pickle.load(f)
+        print("KNN Model loaded successfully!")
+    except Exception as e:
+        print(f"Failed to load KNN model: {e}")
+        ml_models["knn"] = None
+    
     print("Loading NCF Model...")
     try:
         with open(NCF_PATH, "rb") as f:
@@ -167,6 +178,102 @@ def fetch_db_details(item_ids, scores):
 
 # == ENDPOINTS ==
 
+@app.get("/api/recommend_knn/{user_id}", tags=["Recommendations"])
+def recommend_knn_user(user_id: int, k: int = 10):
+    if ml_models["knn"] is None:
+        raise HTTPException(status_code=503, detail="KNN model not loaded")
+    
+    package = ml_models["knn"]
+    
+    model = package["model"]
+    matrix = package["matrix"]
+    idx_to_item = package["idx_to_item"]
+    user_history = package["user_history"].get(user_id, set())
+
+    if user_id not in package["user_to_idx"]:
+        return {"user_id": user_id, "note": "Cold Start", "recommendations": []}
+    
+    u_idx = package["user_to_idx"][user_id]
+    user_interactions = matrix.T[u_idx]
+    seen_item_indices = user_interactions.indices
+
+    candidates = {}
+
+    if len(seen_item_indices) == 0:
+        return {"user_id": user_id, "note": "No interactions found", "recommendations": []}
+    
+    distances, indices = model.kneighbors(matrix[seen_item_indices], n_neighbors=10)
+
+    for i in range(len(seen_item_indices)):
+        for j in range(len(distances[i])):
+            neighbor_idx = indices[i][j]
+            dist = distances[i][j]
+            
+            if idx_to_item[neighbor_idx] in user_history:
+                continue
+            
+            # convert cosine distance to cosine similarity
+            similarity = 1 - dist
+            
+            # add similarity scores if recommended by multiple source items
+            if neighbor_idx not in candidates:
+                candidates[neighbor_idx] = 0
+            candidates[neighbor_idx] += similarity
+        
+    sorted_candidates = sorted(candidates.items(), key=lambda x: x[1], reverse=True)[:k]
+    
+    ids = [idx_to_item[idx] for idx, score in sorted_candidates]
+    scores = [score for idx, score in sorted_candidates]
+    
+    return fetch_db_details(ids, scores)
+
+@app.get("/api/recommend_knn/{user_id}/context/{item_id}", tags=["Recommendations"])
+def recommend_knn_context(user_id: int, item_id: int, k: int = 10):
+    if ml_models["knn"] is None:
+        raise HTTPException(status_code=503, detail="KNN model not loaded")
+        
+    package = ml_models["knn"]
+    
+    model = package["model"]
+    matrix = package["matrix"]
+    item_to_idx = package['item_to_idx']
+    idx_to_item = package["idx_to_item"]
+    user_history = package["user_history"].get(user_id, set())
+    
+    if item_id not in item_to_idx:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    seed_idx = item_to_idx[item_id]
+
+    distances, indices = model.kneighbors(matrix[seed_idx], n_neighbors=k+5)
+
+    ids = []
+    scores = []
+    
+    for dist, neighbor_idx in zip(distances[0], indices[0]):
+        if neighbor_idx == seed_idx:
+            continue
+                    
+        real_id = idx_to_item[neighbor_idx]
+        
+        # don't show what they already bought
+        if real_id in user_history:
+            continue
+            
+        # Convert cosine distance back to cosine similarity
+        score = 1 - dist
+        
+        ids.append(real_id)
+        scores.append(score)
+        
+        if len(ids) >= k:
+            break
+    
+    if not ids:
+        return {"user_id": user_id, "item_id": item_id, "note": "No recommendations found", "recommendations": []}
+            
+    return fetch_db_details(ids, scores)
+
 @app.get("/api/recommend_ncf/{user_id}", tags=["Recommendations"])
 def recommend_ncf_user(user_id: int, k: int = 10):
     if ml_models["ncf"] is None:
@@ -210,6 +317,8 @@ def recommend_ncf_user(user_id: int, k: int = 10):
     
     # Convert Indices back to Real Item IDs
     top_item_ids = le_item.inverse_transform(top_indices.numpy())
+
+    top_scores /= 6.5
     
     return fetch_db_details(top_item_ids, top_scores.numpy())
 
@@ -271,6 +380,8 @@ def recommend_ncf_context(user_id: int, item_id: int, k: int = 10):
         final_item_ids = le_item.inverse_transform(final_item_indices.numpy())
         final_scores = preds[top_k_indices]
     
+    final_scores /= 6.5
+
     return fetch_db_details(final_item_ids, final_scores.numpy())
 
 @app.get("/api/recommend_cbf/{user_id}", tags=["Recommendations"])
@@ -375,7 +486,6 @@ def get_all_user_profiles():
 def get_user_profile(user_id: int):
     conn = get_db_connection()
     profile = conn.execute("SELECT * FROM users WHERE userId = ?", (user_id,)).fetchone()
-    conn.close()
     if profile is None:
         raise HTTPException(status_code=404, detail="User not found")
     
