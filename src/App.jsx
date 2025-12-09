@@ -5,12 +5,14 @@ import { ROUTES } from './utils/constants';
 import Signup from './pages/Signup';
 import Footer from './components/Footer';
 
-// Placeholder components
+// Page components
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Recommendation from './pages/Recommendation';
 import SentimentAnalysis from './pages/SentimentAnalysis';
 import Dashboard from './pages/Dashboard';
+import Catalog from './pages/Catalog';
+import Users from './pages/Users';
 
 function App() {
   return (
@@ -24,6 +26,8 @@ function App() {
               <Route path={ROUTES.HOME} element={<Home />} />
               <Route path={ROUTES.LOGIN} element={<Login />} />
               <Route path={ROUTES.SIGNUP} element={<Signup />} />
+              <Route path={ROUTES.CATALOG} element={<Catalog />} />
+              <Route path={ROUTES.USERS} element={<Users />} />
               <Route path={ROUTES.RECOMMENDATION} element={<Recommendation />} />
               <Route path={ROUTES.SENTIMENT} element={<SentimentAnalysis />} />
               <Route path={ROUTES.DASHBOARD} element={<Dashboard />} />
@@ -31,7 +35,7 @@ function App() {
                 path="*"
                 element={
                   <div className="text-center mt-20">
-                    <h1>404 - Page Not Found</h1>
+                    <h1>404 - Halaman Tidak Ditemukan</h1>
                   </div>
                 }
               />
